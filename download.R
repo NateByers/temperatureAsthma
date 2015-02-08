@@ -111,6 +111,7 @@ for(i in 1:length(urls2014)){
 # pull out hourly table, delete duplicates, and make daily summary table
 con <- dbConnect(dbDriver("SQLite", max.con = 25), dbname="ISDdatabase.sqlite")
 isd.df <- dbReadTable(con, "Data")
+dbDisconnect(con)
 class(isd.df$TEMP) <- "numeric"
 class(isd.df$DEWP) <- "numeric"
 isd.df <- distinct(isd.df)
@@ -124,3 +125,9 @@ isd.df <- summarise(isd.df, TEMP_mean = mean(TEMP, na.rm = TRUE), TEMP_min = min
 
 write.csv(isd.df, file = "INtemp2007_2014.csv")
 
+# make stations table with lat/longs
+stations.df <- read.csv("ftp://ftp.ncdc.noaa.gov/pub/data/gsod/isd-history.csv",
+                        stringsAsFactors = FALSE)
+stations.df$USAF_WBAN <- paste(stations.df$USAF, stations.df$WBAN, sep = "_")
+stations.df <- merge(stations.df, distinct(isd.df[, "USAF_WBAN"]))
+write.csv(stations.df, file = "tempStations.csv")

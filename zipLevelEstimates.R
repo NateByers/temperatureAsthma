@@ -48,7 +48,7 @@ stations.df <- read.csv("tempStations.csv", stringsAsFactors = FALSE)
 #                                       proj4string = CRS("+proj=longlat +datum=NAD83"))
 # spplot(stations.spdf)
 
-# get the temperature data
+# get the weather data
 met.df <- read.csv("INmet2007_2014.csv", stringsAsFactors = FALSE)
 
 # subset down to stations that we have lat/longs for
@@ -194,7 +194,10 @@ idw.temp.max.list <- lapply(1:dim(zcta.df)[1], function(i){
 
 
 temp.max.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.temp.max.list)
-write.csv(temp.max.idw.df, file = "max_temp_idw_ZIP_2007_2014.csv")
+write.csv(temp.max.idw.df, file = "max_temp_idw_ZIP_2007_2014.csv", row.names = FALSE)
+
+
+
 
 # make a wide data frame for minimum temp
 temp.min.df <- spread_(temp.df[, c("DATE", "USAF_WBAN", "TEMP_min")],
@@ -209,7 +212,7 @@ idw.temp.min.list <- lapply(1:dim(zcta.df)[1], function(i){
 })
 
 temp.min.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.temp.min.list)
-write.csv(temp.min.idw.df, file = "min_temp_idw_ZIP_2007_2014.csv")
+write.csv(temp.min.idw.df, file = "min_temp_idw_ZIP_2007_2014.csv", row.names = FALSE)
 
 # make a wide data frame for mean temp
 temp.mean.df <- spread_(temp.df[, c("DATE", "USAF_WBAN", "TEMP_mean")],
@@ -224,7 +227,7 @@ idw.temp.mean.list <- lapply(1:dim(zcta.df)[1], function(i){
 })
 
 temp.mean.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.temp.mean.list)
-write.csv(temp.mean.idw.df, file = "mean_temp_idw_ZIP_2007_2014.csv")
+write.csv(temp.mean.idw.df, file = "mean_temp_idw_ZIP_2007_2014.csv", row.names = FALSE)
 
 # make a dewp.df object and subset down to days with >=75% completeness
 dewp.df <- met.df[, c("DATE", "USAF_WBAN", grep("DEWP", names(met.df), fixed = TRUE, value = TRUE))]
@@ -252,7 +255,7 @@ idw.dewp.max.list <- lapply(1:dim(zcta.df)[1], function(i){
 })
 
 dewp.max.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.dewp.max.list)
-write.csv(dewp.max.idw.df, file = "max_dewp_idw_ZIP_2007_2014.csv")
+write.csv(dewp.max.idw.df, file = "max_dewp_idw_ZIP_2007_2014.csv", row.names = FALSE)
 
 # make a wide data frame for minimum dewpoint
 dewp.min.df <- spread_(dewp.df[, c("DATE", "USAF_WBAN", "DEWP_min")],
@@ -267,9 +270,9 @@ idw.dewp.min.list <- lapply(1:dim(zcta.df)[1], function(i){
 })
 
 dewp.min.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.dewp.min.list)
-write.csv(dewp.min.idw.df, file = "min_dewp_idw_ZIP_2007_2014.csv")
+write.csv(dewp.min.idw.df, file = "min_dewp_idw_ZIP_2007_2014.csv", row.names = FALSE)
 
-# make a wide data frame for minimum dewpoint
+# make a wide data frame for mean dewpoint
 dewp.mean.df <- spread_(dewp.df[, c("DATE", "USAF_WBAN", "DEWP_mean")],
                        key_col = "USAF_WBAN", value_col = "DEWP_mean")
 
@@ -282,7 +285,106 @@ idw.dewp.mean.list <- lapply(1:dim(zcta.df)[1], function(i){
 })
 
 dewp.mean.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.dewp.mean.list)
-write.csv(dewp.mean.idw.df, file = "mean_dewp_idw_ZIP_2007_2014.csv")
+write.csv(dewp.mean.idw.df, file = "mean_dewp_idw_ZIP_2007_2014.csv", row.names = FALSE)
+
+
+
+
+
+
+
+
+# make a rh.df object and subset down to days with >=75% completeness
+rh.df <- met.df[, c("DATE", "USAF_WBAN", grep("RH", names(met.df), fixed = TRUE, value = TRUE))]
+rh.df <- rh.df[rh.df$RH_n >= 18, ]
+
+# order by USAF_WBAN
+rh.df <- arrange(rh.df, USAF_WBAN)
+
+# make a stations data frame that only has stations in the rh.df data frame
+stations.rh.df <- merge(stations.df, data.frame(USAF_WBAN = unique(rh.df$USAF_WBAN)))
+
+# order by USAF_WBAN
+stations.rh.df <- arrange(stations.rh.df, USAF_WBAN)
+
+# make a wide data frame for maximum relative humidity
+rh.max.df <- spread_(rh.df[, c("DATE", "USAF_WBAN", "RH_max")],
+                       key_col = "USAF_WBAN", value_col = "RH_max")
+
+idw.rh.max.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.rh.df$USAF_WBAN,
+                  station.lats = stations.rh.df$LAT, station.lons = stations.rh.df$LON, 
+                  station.values = rh.max.df[, -1], station.index = rh.max.df[, 1],
+                  max.radius = 200)
+})
+
+rh.max.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.rh.max.list)
+write.csv(rh.max.idw.df, file = "max_rh_idw_ZIP_2007_2014.csv", row.names = FALSE)
+
+# make a wide data frame for minimum relative humidity
+rh.min.df <- spread_(rh.df[, c("DATE", "USAF_WBAN", "RH_min")],
+                       key_col = "USAF_WBAN", value_col = "RH_min")
+
+idw.rh.min.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.rh.df$USAF_WBAN,
+                  station.lats = stations.rh.df$LAT, station.lons = stations.rh.df$LON, 
+                  station.values = rh.min.df[, -1], station.index = rh.min.df[, 1],
+                  max.radius = 200)
+})
+
+rh.min.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.rh.min.list)
+write.csv(rh.min.idw.df, file = "min_rh_idw_ZIP_2007_2014.csv", row.names = FALSE)
+
+# make a wide data frame for mean relative humidity
+rh.mean.df <- spread_(rh.df[, c("DATE", "USAF_WBAN", "RH_mean")],
+                        key_col = "USAF_WBAN", value_col = "RH_mean")
+
+idw.rh.mean.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.rh.df$USAF_WBAN,
+                  station.lats = stations.rh.df$LAT, station.lons = stations.rh.df$LON, 
+                  station.values = rh.mean.df[, -1], station.index = rh.mean.df[, 1],
+                  max.radius = 200)
+})
+
+rh.mean.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.rh.mean.list)
+write.csv(rh.mean.idw.df, file = "mean_rh_idw_ZIP_2007_2014.csv", row.names = FALSE)
+
+
+
+
+
+# make a aptemp.df object and subset down to days with both TEMP and DEWP >=75% completeness
+aptemp.df <- met.df[met.df$TEMP_n >= 18 & met.df$DEWP_n >= 18, ]
+aptemp.df <- aptemp.df[, c("DATE", "USAF_WBAN", "APTEMP")]
+
+
+# order by USAF_WBAN
+aptemp.df <- arrange(aptemp.df, USAF_WBAN)
+
+# make a stations data frame that only has stations in the aptemp.df data frame
+stations.aptemp.df <- merge(stations.df, data.frame(USAF_WBAN = unique(aptemp.df$USAF_WBAN)))
+
+# order by USAF_WBAN
+stations.aptemp.df <- arrange(stations.aptemp.df, USAF_WBAN)
+
+# make a wide data frame 
+aptemp.df <- spread_(aptemp.df, key_col = "USAF_WBAN", value_col = "APTEMP")
+
+idw.aptemp.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.aptemp.df$USAF_WBAN,
+                  station.lats = stations.aptemp.df$LAT, station.lons = stations.aptemp.df$LON, 
+                  station.values = aptemp.df[, -1], station.index = aptemp.df[, 1],
+                  max.radius = 200)
+})
+
+aptemp.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.aptemp.list)
+write.csv(aptemp.idw.df, file = "aptemp_idw_ZIP_2007_2014.csv", row.names = FALSE)
+
+
 
 ###################################################################################
 # Get inverse distance weighted PM2.5 estimates

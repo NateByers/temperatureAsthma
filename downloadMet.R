@@ -108,26 +108,45 @@ for(i in 1:length(urls2014)){
   loadDatabase(url = urls2014[i], database.file = "ISDdatabase.sqlite")
 }
 
-# pull out hourly table, delete duplicates, and make daily summary table
+# pull out hourly table, delete duplicates
 con <- dbConnect(dbDriver("SQLite", max.con = 25), dbname="ISDdatabase.sqlite")
 isd.df <- dbReadTable(con, "Data")
 dbDisconnect(con)
 class(isd.df$TEMP) <- "numeric"
 class(isd.df$DEWP) <- "numeric"
 isd.df <- distinct(isd.df)
+
+# install weathermetrics and calculate relative humidity
+# devtools::install_url("http://cran.r-project.org/src/contrib/Archive/weathermetrics/weathermetrics_1.0.tar.gz")
+library(weathermetrics)
+isd.df$RH <- dewpoint.to.humidity(dp = isd.df$DEWP, t = isd.df$TEMP)
+
+# make daily summary table
 isd.df$TEMP_not_na <- !is.na(isd.df$TEMP)
 isd.df$DEWP_not_na <- !is.na(isd.df$DEWP)
+isd.df$RH_not_na <- !is.na(isd.df$RH)
 isd.df <- group_by(isd.df, USAF_WBAN, YEAR, MONTH, DAY)
 isd.df <- summarise(isd.df, TEMP_mean = mean(TEMP, na.rm = TRUE), TEMP_min = min(TEMP, na.rm = TRUE),
                     TEMP_max = max(TEMP, na.rm = TRUE), TEMP_n = sum(TEMP_not_na),
                     DEWP_mean = mean(DEWP, na.rm = TRUE), DEWP_min  = min(DEWP, na.rm = TRUE),
-                    DEWP_max = max(DEWP, na.rm = TRUE), DEWP_n = sum(DEWP_not_na))
+                    DEWP_max = max(DEWP, na.rm = TRUE), DEWP_n = sum(DEWP_not_na),
+                    RH_mean = mean(RH, na.rm = TRUE), RH_min  = min(RH, na.rm = TRUE),
+                    RH_max = max(RH, na.rm = TRUE), RH_n = sum(RH_not_na))
+# calculate apparent temperature
+isd.df[isd.df == NaN] <- NA
+isd.df$APTEMP <- apply(isd.df, 1, function(row) {print(class(row["TEMP_mean"]));
+                       print(class(row["DEWP_mean"]));
+  if(!is.na(row["TEMP_mean"]) & !is.na(row["DEWP_mean"])){- 2.653 + 0.994*fahrenheit.to.celsius(as.numeric(row["TEMP_mean"])) +
+                                                 0.0153*(fahrenheit.to.celsius(as.numeric(row["DEWP_mean"])))^2}else{NA}} )
 
-write.csv(isd.df, file = "INtemp2007_2014.csv")
+isd.df$APTEMP <- sapply(isd.df$APTEMP, celsius.to.fahrenheit)
+
+write.csv(isd.df, file = "INmet2007_2014.csv", row.names = FALSE)
 
 # make stations table with lat/longs
-stations.df <- read.csv("ftp://ftp.ncdc.noaa.gov/pub/data/gsod/isd-history.csv",
+stations.df <- read.csv("ftp://ftp.ncdc.noaa.gov/pub/data/noaa/isd-history.csv",
                         stringsAsFactors = FALSE)
 stations.df$USAF_WBAN <- paste(stations.df$USAF, stations.df$WBAN, sep = "_")
 stations.df <- merge(stations.df, distinct(isd.df[, "USAF_WBAN"]))
 write.csv(stations.df, file = "tempStations.csv")
+

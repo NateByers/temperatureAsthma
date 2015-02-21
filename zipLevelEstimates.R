@@ -28,26 +28,54 @@ zcta.df <- data.frame("Longitude" = coords[, 1],
 write.csv(zcta.df, file = "zcta2010.csv")
 ##########################################################################
 # Write the function for inverse distance weighting
-
+library(dplyr)
+library(tidyr)
+library(stringr)
 # get the zip code centroids
 zcta.df <- read.csv("zcta2010.csv", stringsAsFactors = FALSE)
-
-# get the temperature data
-temp.df <- read.csv("INtemp2007_2014.csv")
-# make one date column
-library(stringr)
-temp.df$DATE <- paste0(temp.df$YEAR,
-                       str_pad(temp.df$MONTH, 2, pad = "0"),
-                       str_pad(temp.df$DAY, 2, pad = "0"))
-# make it a wide data frame
-library(tidyr)
-temp.max.df <- spread_(temp.df[, c("DATE", "USAF_WBAN", "TEMP_max")],
-                       key_col = "USAF_WBAN", value_col = "TEMP_max")
-                       
 
 # get locations of weather stations
 stations.df <- read.csv("tempStations.csv", stringsAsFactors = FALSE)
 
+
+# # take a look at the coverage
+# library(maps)
+# map("state", "indiana")
+# points(stations.df$LON, stations.df$LAT)
+# library(sp)
+# stations.spdf <- SpatialPointsDataFrame(cbind(stations.df$LON, stations.df$LAT),
+#                                       data.frame(dummy = rnorm(dim(stations.df)[1])),
+#                                       proj4string = CRS("+proj=longlat +datum=NAD83"))
+# spplot(stations.spdf)
+
+# get the temperature data
+met.df <- read.csv("INmet2007_2014.csv", stringsAsFactors = FALSE)
+
+# subset down to stations that we have lat/longs for
+met.df <- merge(met.df, data.frame(USAF_WBAN = stations.df$USAF_WBAN))
+
+# make one date column
+met.df$DATE <- paste0(met.df$YEAR,
+                       str_pad(met.df$MONTH, 2, pad = "0"),
+                       str_pad(met.df$DAY, 2, pad = "0"))
+
+# make a temp.df object and subset down to days with >=75% completeness
+temp.df <- met.df[, c("DATE", "USAF_WBAN", grep("TEMP", names(met.df), fixed = TRUE, value = TRUE))]
+temp.df <- temp.df[temp.df$TEMP_n >= 18, ]
+
+# order by USAF_WBAN
+temp.df <- arrange(temp.df, USAF_WBAN)
+
+# make a stations data frame that only has stations in the temp.df data frame
+stations.temp.df <- merge(stations.df, data.frame(USAF_WBAN = unique(temp.df$USAF_WBAN)))
+
+# order by USAF_WBAN
+stations.temp.df <- arrange(stations.temp.df, USAF_WBAN)
+
+# make a wide data frame for maximum temp
+temp.max.df <- spread_(temp.df[, c("DATE", "USAF_WBAN", "TEMP_max")],
+                       key_col = "USAF_WBAN", value_col = "TEMP_max")
+                       
 # function for distance in kilometers between two long/lat positions (from "fossil" package)
 earth.dist <- function (long1, lat1, long2, lat2) 
 {
@@ -65,22 +93,25 @@ earth.dist <- function (long1, lat1, long2, lat2)
   return(d)
 }
 
+# subset 
 
 # function that calculates the inverse distance weighted average for a target point
-weightedAverage(target.lat, target.lon, 
-                station.ids, # id vector in same order as station.lats and station.lons
-                station.lats, # vector corresponding to station.ids
-                station.lons, # vector corresponding to station.ids
-                station.values, # data.frame whose columns are station.ids (i.e., a wide format)
-                station.index = NULL, # an index vector you can supply; convenient if the rows are an hour, day, year, etc.
-                max.radius # maximum radius, in kilometers, beyond which a station no longer influences the weighted average
-                ){
-#   target.lat = zcta.df$Latitude[1]; target.lon = zcta.df$Longitude[1]; station.ids = stations.df$USAF_WBAN; station.lats = stations.df$LAT; station.lons = stations.df$LON; station.values = temp.max.df[, -1]; station.index = temp.max.df[, 1]; max.radius = 200
+weightedAverage <- function(target.lat, target.lon, target.name = NULL, # name for value column in returned data.frame
+                            station.ids, # id vector in same order as station.lats and station.lons
+                            station.lats, # vector corresponding to station.ids
+                            station.lons, # vector corresponding to station.ids
+                            station.values, # data.frame whose columns are station.ids (i.e., a wide format)
+                            station.index = NULL, # an index vector you can supply; convenient if the rows are an hour, day, year, etc.
+                            max.radius # maximum radius, in kilometers, beyond which a station no longer influences the weighted average
+){
+  
+  print(target.name)
+  #   target.lat = zcta.df$Latitude[1]; target.lon = zcta.df$Longitude[1]; target.name = zcta.df$ZCTA[1]; station.ids = stations.df$USAF_WBAN; station.lats = stations.df$LAT; station.lons = stations.df$LON; station.values = temp.max.df[, -1]; station.index = temp.max.df[, 1]; max.radius = 200
   
   if(length(station.ids) != length(station.lats) | 
        length(station.ids) != length(station.lons) |
        length(station.lats) != length(station.lons) 
-     ) {
+  ) {
     stop("Dimensions for station IDs and lat/lons don't match up")
   }
   if(!identical(station.ids, colnames(station.values))) {
@@ -92,10 +123,14 @@ weightedAverage(target.lat, target.lon,
     }
   } else {station.index <- 1:dim(station.values)[1]}
   if(max.radius < 0){
-    "Maximum radius must be a non-negative numeric value"
+    stop("Maximum radius must be a non-negative numeric value in kilometers")
   }
-  
-  # need to add 0.000001 degrees to station coordinates if idential to target point
+  if(sum(apply(cbind(station.lons, station.lats, target.lon, target.lat), 1, function(x){
+    x[1] == x[3] & x[2] == x[4]
+  })) > 0){
+    stop("Target location cannot match any station locations")
+  }
+  if(is.null(target.name)){target.name = "idw_average"}
   
   # get distances from stations to target point
   dists <- sapply(1:length(station.ids), function(i){
@@ -113,10 +148,6 @@ weightedAverage(target.lat, target.lon,
   # remove columns from station values data frame 
   station.values <- station.values[, station.locations$id]
   
-  # replace values with 0 where there is an NA 
-  station.values[is.na(station.values)] <- 0
-  
-  
   # make matrix of weights with same dimension as value matrix 
   # (weights are inverse distances squared)
   weights <- matrix(1/(rep(station.locations$r, dim(station.values)[1])^2),
@@ -124,6 +155,12 @@ weightedAverage(target.lat, target.lon,
   
   # replace weights with 0 where there is an NA in the values matrix
   weights[is.na(station.values)] <- 0
+  
+  # find rows in staiont.values that are all NAs, for later...
+  all.na <- apply(station.values, 1, function(x) sum(!is.na(x)) == 0)
+  
+  # replace values with 0 where there is an NA 
+  station.values[is.na(station.values)] <- 0
   
   # multiply (element-wise) the values and weights matrices and get a 
   # vector of summed rows
@@ -133,11 +170,163 @@ weightedAverage(target.lat, target.lon,
   denom <- rowSums(weights) 
   
   # calculate inverse distance squared weighted average for each day
-  weighted.avg <- summed/denom
+  weighted.avg <- numerator/denom
   
-  # replace zeros with NAs
-  weighted.avg[weighted.avg == 0] <- NA
-
-
+  # replace rows with all NAs with NA
+  weighted.avg[all.na] <- NA
   
+  # make data.frame object with the station values index
+  idw.df <- data.frame(index = station.index, weighted.avg, stringsAsFactors = FALSE)
+  
+  # rename the values column
+  colnames(idw.df)[2] <- target.name
+  
+  idw.df
 }
+
+idw.temp.max.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.temp.df$USAF_WBAN,
+                  station.lats = stations.temp.df$LAT, station.lons = stations.temp.df$LON, 
+                  station.values = temp.max.df[, -1], station.index = temp.max.df[, 1],
+                  max.radius = 200)
+})
+
+
+temp.max.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.temp.max.list)
+write.csv(temp.max.idw.df, file = "max_temp_idw_ZIP_2007_2014.csv")
+
+# make a wide data frame for minimum temp
+temp.min.df <- spread_(temp.df[, c("DATE", "USAF_WBAN", "TEMP_min")],
+                       key_col = "USAF_WBAN", value_col = "TEMP_min")
+
+idw.temp.min.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.temp.df$USAF_WBAN,
+                  station.lats = stations.temp.df$LAT, station.lons = stations.temp.df$LON, 
+                  station.values = temp.min.df[, -1], station.index = temp.min.df[, 1],
+                  max.radius = 200)
+})
+
+temp.min.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.temp.min.list)
+write.csv(temp.min.idw.df, file = "min_temp_idw_ZIP_2007_2014.csv")
+
+# make a wide data frame for mean temp
+temp.mean.df <- spread_(temp.df[, c("DATE", "USAF_WBAN", "TEMP_mean")],
+                       key_col = "USAF_WBAN", value_col = "TEMP_mean")
+
+idw.temp.mean.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.temp.df$USAF_WBAN,
+                  station.lats = stations.temp.df$LAT, station.lons = stations.temp.df$LON, 
+                  station.values = temp.mean.df[, -1], station.index = temp.mean.df[, 1],
+                  max.radius = 200)
+})
+
+temp.mean.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.temp.mean.list)
+write.csv(temp.mean.idw.df, file = "mean_temp_idw_ZIP_2007_2014.csv")
+
+# make a dewp.df object and subset down to days with >=75% completeness
+dewp.df <- met.df[, c("DATE", "USAF_WBAN", grep("DEWP", names(met.df), fixed = TRUE, value = TRUE))]
+dewp.df <- dewp.df[dewp.df$DEWP_n >= 18, ]
+
+# order by USAF_WBAN
+dewp.df <- arrange(dew.df, USAF_WBAN)
+
+# make a stations data frame that only has stations in the dewp.df data frame
+stations.dewp.df <- merge(stations.df, data.frame(USAF_WBAN = unique(dewp.df$USAF_WBAN)))
+
+# order by USAF_WBAN
+stations.dewp.df <- arrange(stations.dewp.df, USAF_WBAN)
+
+# make a wide data frame for maximum dewpoint
+dewp.max.df <- spread_(dewp.df[, c("DATE", "USAF_WBAN", "DEWP_max")],
+                       key_col = "USAF_WBAN", value_col = "DEWP_max")
+
+idw.dewp.max.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.dewp.df$USAF_WBAN,
+                  station.lats = stations.dewp.df$LAT, station.lons = stations.dewp.df$LON, 
+                  station.values = dewp.max.df[, -1], station.index = dewp.max.df[, 1],
+                  max.radius = 200)
+})
+
+dewp.max.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.dewp.max.list)
+write.csv(dewp.max.idw.df, file = "max_dewp_idw_ZIP_2007_2014.csv")
+
+# make a wide data frame for minimum dewpoint
+dewp.min.df <- spread_(dewp.df[, c("DATE", "USAF_WBAN", "DEWP_min")],
+                       key_col = "USAF_WBAN", value_col = "DEWP_min")
+
+idw.dewp.min.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.dewp.df$USAF_WBAN,
+                  station.lats = stations.dewp.df$LAT, station.lons = stations.dewp.df$LON, 
+                  station.values = dewp.min.df[, -1], station.index = dewp.min.df[, 1],
+                  max.radius = 200)
+})
+
+dewp.min.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.dewp.min.list)
+write.csv(dewp.min.idw.df, file = "min_dewp_idw_ZIP_2007_2014.csv")
+
+# make a wide data frame for minimum dewpoint
+dewp.mean.df <- spread_(dewp.df[, c("DATE", "USAF_WBAN", "DEWP_mean")],
+                       key_col = "USAF_WBAN", value_col = "DEWP_mean")
+
+idw.dewp.mean.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.dewp.df$USAF_WBAN,
+                  station.lats = stations.dewp.df$LAT, station.lons = stations.dewp.df$LON, 
+                  station.values = dewp.mean.df[, -1], station.index = dewp.mean.df[, 1],
+                  max.radius = 200)
+})
+
+dewp.mean.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.dewp.mean.list)
+write.csv(dewp.mean.idw.df, file = "mean_dewp_idw_ZIP_2007_2014.csv")
+
+###################################################################################
+# Get inverse distance weighted PM2.5 estimates
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+# get the zip code centroids
+zcta.df <- read.csv("zcta2010.csv", stringsAsFactors = FALSE)
+
+# get the data frame of PM2.5 daily summary values (object is named "pm25.df"),
+# make date column a Date column, rename Mean column, make it a numeric vector,
+# and order
+load("pm25_IN_2007_2014.rda")
+pm25.df$Date <- as.Date(pm25.df$Date, format = "%m/%d/%Y")
+names(pm25.df)[names(pm25.df) == "Daily Mean PM2.5 Concentration"] <- "Mean_Value"
+pm25.df$Mean_Value <- as.numeric(pm25.df$Mean_Value)
+pm25.df <- arrange(pm25.df, AQS_SITE_ID, Date)
+
+# subset down to days with completeness >=75% 
+pm25.df <- filter(pm25.df, as.numeric(PERCENT_COMPLETE) >= 75)
+
+# get AQS station locations
+stations.df <- unique(pm25.df[, c("AQS_SITE_ID", "SITE_LATITUDE", "SITE_LONGITUDE")]) 
+
+# take the average of POCs
+pm25.df <- group_by(pm25.df, Date, AQS_SITE_ID)
+pm25.df <- summarise(pm25.df, Mean_Value = mean(Mean_Value))
+
+# make a wide data frame 
+pm25.wide.df <- spread_(pm25.df, key_col = "AQS_SITE_ID", value_col = "Mean_Value")
+
+idw.pm25.mean.list <- lapply(1:dim(zcta.df)[1], function(i){
+  weightedAverage(target.lat = zcta.df$Latitude[i], target.lon = zcta.df$Longitude[i],
+                  target.name = zcta.df$ZCTA[i], station.ids = stations.df$AQS_SITE_ID,
+                  station.lats = as.numeric(stations.df$SITE_LATITUDE), 
+                  station.lons = as.numeric(stations.df$SITE_LONGITUDE), 
+                  station.values = pm25.wide.df[, -1], station.index = pm25.wide.df$Date,
+                  max.radius = 200)
+})
+
+
+pm25.mean.idw.df <- Reduce(function(...) merge(..., all = TRUE), idw.pm25.mean.list)
+write.csv(pm25.mean.idw.df, file = "mean_pm25_idw_ZIP_2007_2014.csv")
+
+
+
